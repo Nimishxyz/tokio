@@ -461,20 +461,6 @@ compile_error! {
     "Tokio requires the platform pointer width to be at least 32 bits"
 }
 
-#[cfg(all(
-    not(tokio_unstable),
-    target_family = "wasm",
-    any(
-        feature = "fs",
-        feature = "io-std",
-        feature = "net",
-        feature = "process",
-        feature = "rt-multi-thread",
-        feature = "signal"
-    )
-))]
-compile_error!("Only features sync,macros,io-util,rt,time are supported on wasm.");
-
 #[cfg(all(not(tokio_unstable), tokio_taskdump))]
 compile_error!("The `tokio_taskdump` feature requires `--cfg tokio_unstable`.");
 
