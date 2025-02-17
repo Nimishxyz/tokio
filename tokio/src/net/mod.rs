@@ -42,9 +42,10 @@ cfg_net! {
     pub mod tcp;
     pub use tcp::listener::TcpListener;
     pub use tcp::stream::TcpStream;
-    cfg_not_wasi! {
+    cfg_not_wasip1! {
         pub use tcp::socket::TcpSocket;
-
+    }
+    cfg_not_wasi! {
         mod udp;
         #[doc(inline)]
         pub use udp::UdpSocket;
