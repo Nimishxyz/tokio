@@ -6,6 +6,9 @@ use std::net::SocketAddr;
 
 #[cfg(unix)]
 use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, RawFd};
+#[cfg(all(target_os = "wasi", target_env = "p2"))]
+use std::os::wasi::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, RawFd};
+#[cfg(unix)]
 use std::time::Duration;
 
 cfg_windows! {
@@ -416,6 +419,7 @@ impl TcpSocket {
     ///
     /// If `SO_LINGER` is not specified, and the socket is closed, the system handles the call in a
     /// way that allows the process to continue as quickly as possible.
+    #[cfg(not(target_family = "wasm"))]
     pub fn set_linger(&self, dur: Option<Duration>) -> io::Result<()> {
         self.inner.set_linger(dur)
     }
@@ -426,6 +430,7 @@ impl TcpSocket {
     /// For more information about this option, see [`set_linger`].
     ///
     /// [`set_linger`]: TcpSocket::set_linger
+    #[cfg(not(target_family = "wasm"))]
     pub fn linger(&self) -> io::Result<Option<Duration>> {
         self.inner.linger()
     }
@@ -489,7 +494,8 @@ impl TcpSocket {
         target_os = "redox",
         target_os = "solaris",
         target_os = "illumos",
-        target_os = "haiku"
+        target_os = "haiku",
+        target_os = "wasi",
     )))]
     #[cfg_attr(
         docsrs,
@@ -502,7 +508,7 @@ impl TcpSocket {
         ))))
     )]
     pub fn tos(&self) -> io::Result<u32> {
-        self.inner.tos()
+        self.inner.tos_v4()
     }
 
     /// Sets the value for the `IP_TOS` option on this socket.
@@ -518,7 +524,8 @@ impl TcpSocket {
         target_os = "redox",
         target_os = "solaris",
         target_os = "illumos",
-        target_os = "haiku"
+        target_os = "haiku",
+        target_os = "wasi",
     )))]
     #[cfg_attr(
         docsrs,
@@ -531,7 +538,7 @@ impl TcpSocket {
         ))))
     )]
     pub fn set_tos(&self, tos: u32) -> io::Result<()> {
-        self.inner.set_tos(tos)
+        self.inner.set_tos_v4(tos)
     }
 
     /// Gets the value for the `SO_BINDTODEVICE` option on this socket
@@ -659,7 +666,7 @@ impl TcpSocket {
     /// ```
     pub async fn connect(self, addr: SocketAddr) -> io::Result<TcpStream> {
         if let Err(err) = self.inner.connect(&addr.into()) {
-            #[cfg(unix)]
+            #[cfg(any(unix, all(target_os = "wasi", target_env = "p2")))]
             if err.raw_os_error() != Some(libc::EINPROGRESS) {
                 return Err(err);
             }
@@ -668,9 +675,18 @@ impl TcpSocket {
                 return Err(err);
             }
         }
+
         #[cfg(unix)]
         let mio = {
             use std::os::unix::io::{FromRawFd, IntoRawFd};
+
+            let raw_fd = self.inner.into_raw_fd();
+            unsafe { mio::net::TcpStream::from_raw_fd(raw_fd) }
+        };
+
+        #[cfg(all(target_os = "wasi", target_env = "p2"))]
+        let mio = {
+            use std::os::wasi::io::{FromRawFd, IntoRawFd};
 
             let raw_fd = self.inner.into_raw_fd();
             unsafe { mio::net::TcpStream::from_raw_fd(raw_fd) }
@@ -732,6 +748,14 @@ impl TcpSocket {
             unsafe { mio::net::TcpListener::from_raw_fd(raw_fd) }
         };
 
+        #[cfg(all(target_os = "wasi", target_env = "p2"))]
+        let mio = {
+            use std::os::wasi::io::{FromRawFd, IntoRawFd};
+
+            let raw_fd = self.inner.into_raw_fd();
+            unsafe { mio::net::TcpListener::from_raw_fd(raw_fd) }
+        };
+
         #[cfg(windows)]
         let mio = {
             use std::os::windows::io::{FromRawSocket, IntoRawSocket};
@@ -786,6 +810,14 @@ impl TcpSocket {
             unsafe { TcpSocket::from_raw_fd(raw_fd) }
         }
 
+        #[cfg(all(target_os = "wasi", target_env = "p2"))]
+        {
+            use std::os::wasi::io::{FromRawFd, IntoRawFd};
+
+            let raw_fd = std_stream.into_raw_fd();
+            unsafe { TcpSocket::from_raw_fd(raw_fd) }
+        }
+
         #[cfg(windows)]
         {
             use std::os::windows::io::{FromRawSocket, IntoRawSocket};
@@ -814,8 +846,8 @@ impl fmt::Debug for TcpSocket {
 
 // These trait implementations can't be build on Windows, so we completely
 // ignore them, even when building documentation.
-#[cfg(unix)]
-cfg_unix! {
+#[cfg(any(unix, all(target_os = "wasi", target_env = "p2")))]
+cfg_unix_and_wasi! {
     impl AsRawFd for TcpSocket {
         fn as_raw_fd(&self) -> RawFd {
             self.inner.as_raw_fd()

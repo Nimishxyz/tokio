@@ -37,6 +37,17 @@ macro_rules! cfg_unix {
     }
 }
 
+/// Enables Unix and WASIp2-specific code.
+macro_rules! cfg_unix_and_wasi {
+    ($($item:item)*) => {
+        $(
+            #[cfg(any(all(doc, docsrs), unix, all(target_os = "wasi", target_env = "p2")))]
+            #[cfg_attr(docsrs, doc(cfg(unix)))]
+            $item
+        )*
+    };
+}
+
 /// Enables unstable Windows-specific code.
 /// Use this macro instead of `cfg(windows)` to generate docs properly.
 macro_rules! cfg_unstable_windows {

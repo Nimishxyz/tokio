@@ -298,7 +298,7 @@ impl TcpListener {
         }
     }
 
-    cfg_not_wasi! {
+    cfg_not_wasip1! {
         pub(crate) fn new(listener: mio::net::TcpListener) -> io::Result<TcpListener> {
             let io = PollEvented::new(listener)?;
             Ok(TcpListener { io })

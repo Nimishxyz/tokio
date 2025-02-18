@@ -50,7 +50,7 @@ impl LogHistogram {
     /// - If `bucket_offset` is greater than the specified number of buckets, `(n - p + 1) * 2^p`
     fn from_n_p(n: u32, p: u32, bucket_offset: usize) -> Self {
         assert!(n >= p, "{n} (n) must be at least as large as {p} (p)");
-        let num_buckets = ((n - p + 1) * 1 << p) as usize - bucket_offset;
+        let num_buckets = (((n - p + 1) * 1) << p) as usize - bucket_offset;
         Self {
             num_buckets,
             p,
