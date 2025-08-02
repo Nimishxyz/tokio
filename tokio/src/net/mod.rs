@@ -45,7 +45,7 @@ cfg_net! {
     cfg_not_wasip1! {
         pub use tcp::socket::TcpSocket;
     }
-    cfg_not_wasi! {
+    cfg_not_wasip1! {
         mod udp;
         #[doc(inline)]
         pub use udp::UdpSocket;

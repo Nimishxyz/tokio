@@ -2,6 +2,9 @@ use std::future;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
+#[cfg(target_os = "wasi")]
+mod wasi_dns;
+
 /// Converts or resolves without blocking to one or more `SocketAddr` values.
 ///
 /// # DNS
@@ -166,7 +169,6 @@ cfg_net! {
         type Future = sealed::MaybeReady;
 
         fn to_socket_addrs(&self, _: sealed::Internal) -> Self::Future {
-            use crate::blocking::spawn_blocking;
             use sealed::MaybeReady;
 
             // First check if the input parses as a socket address
@@ -176,12 +178,23 @@ cfg_net! {
                 return MaybeReady(sealed::State::Ready(Some(addr)));
             }
 
-            // Run DNS lookup on the blocking pool
-            let s = self.to_owned();
+            // On WASI, use native async DNS resolution
+            #[cfg(target_os = "wasi")]
+            {
+                use crate::net::addr::wasi_dns::resolve_dns_async;
+                MaybeReady(sealed::State::Resolving(Box::new(resolve_dns_async(self.to_owned()))))
+            }
 
-            MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
-                std::net::ToSocketAddrs::to_socket_addrs(&s)
-            })))
+            // Run DNS lookup on the blocking pool (non-WASI platforms)
+            #[cfg(not(target_os = "wasi"))]
+            {
+                use crate::blocking::spawn_blocking;
+                let s = self.to_owned();
+
+                MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
+                    std::net::ToSocketAddrs::to_socket_addrs(&s)
+                })))
+            }
         }
     }
 
@@ -194,7 +207,6 @@ cfg_net! {
         type Future = sealed::MaybeReady;
 
         fn to_socket_addrs(&self, _: sealed::Internal) -> Self::Future {
-            use crate::blocking::spawn_blocking;
             use sealed::MaybeReady;
 
             let (host, port) = *self;
@@ -214,11 +226,29 @@ cfg_net! {
                 return MaybeReady(sealed::State::Ready(Some(addr)));
             }
 
-            let host = host.to_owned();
+            // On WASI, DNS resolution is not supported via blocking calls
+            // WASIp2 supports async DNS but Tokio doesn't have native support yet
+            #[cfg(target_os = "wasi")]
+            {
+                // For now, return an error for unresolved hostnames on WASI
+                // TODO: Implement native WASIp2 async DNS resolution
+                use std::io::{Error, ErrorKind};
+                return MaybeReady(sealed::State::Error(Error::new(
+                    ErrorKind::Unsupported,
+                    "DNS resolution not yet supported on WASI - use IP addresses directly"
+                )));
+            }
 
-            MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
-                std::net::ToSocketAddrs::to_socket_addrs(&(&host[..], port))
-            })))
+            // Run DNS lookup on the blocking pool (non-WASI platforms)
+            #[cfg(not(target_os = "wasi"))]
+            {
+                use crate::blocking::spawn_blocking;
+                let host = host.to_owned();
+
+                MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
+                    std::net::ToSocketAddrs::to_socket_addrs(&(&host[..], port))
+                })))
+            }
         }
     }
 
@@ -281,10 +311,25 @@ pub(crate) mod sealed {
         #[derive(Debug)]
         pub struct MaybeReady(pub(super) State);
 
-        #[derive(Debug)]
         pub(super) enum State {
             Ready(Option<SocketAddr>),
             Blocking(JoinHandle<io::Result<vec::IntoIter<SocketAddr>>>),
+            #[cfg(target_os = "wasi")]
+            Resolving(Box<dyn Future<Output = io::Result<vec::IntoIter<SocketAddr>>> + Send + Unpin>),
+            Error(io::Error),
+        }
+
+        // Manual Debug implementation to handle the non-Debug future type
+        impl std::fmt::Debug for State {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    State::Ready(addr) => f.debug_tuple("Ready").field(addr).finish(),
+                    State::Blocking(handle) => f.debug_tuple("Blocking").field(handle).finish(),
+                    #[cfg(target_os = "wasi")]
+                    State::Resolving(_) => f.debug_tuple("Resolving").field(&"<future>").finish(),
+                    State::Error(err) => f.debug_tuple("Error").field(err).finish(),
+                }
+            }
         }
 
         #[doc(hidden)]
@@ -304,9 +349,27 @@ pub(crate) mod sealed {
                         Poll::Ready(Ok(iter))
                     }
                     State::Blocking(ref mut rx) => {
-                        let res = ready!(Pin::new(rx).poll(cx))?.map(OneOrMore::More);
-
-                        Poll::Ready(res)
+                        let result = ready!(Pin::new(rx).poll(cx));
+                        match result {
+                            Ok(dns_result) => match dns_result {
+                                Ok(iter) => Poll::Ready(Ok(OneOrMore::More(iter))),
+                                Err(e) => Poll::Ready(Err(e)),
+                            },
+                            Err(join_error) => Poll::Ready(Err(io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("DNS resolution task failed: {}", join_error)
+                            ))),
+                        }
+                    }
+                    #[cfg(target_os = "wasi")]
+                    State::Resolving(ref mut future) => {
+                        let iter = ready!(Pin::new(future).poll(cx))?;
+                        Poll::Ready(Ok(OneOrMore::More(iter)))
+                    }
+                    State::Error(ref mut e) => {
+                        // Move the error out since we can only return it once
+                        let error = std::mem::replace(e, io::Error::new(io::ErrorKind::Other, ""));
+                        Poll::Ready(Err(error))
                     }
                 }
             }

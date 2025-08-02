@@ -93,7 +93,7 @@ pin-project-lite = "0.2.11"
 # Everything else is optional...
 bytes = { version = "1.2.1", optional = true }
 # TODO dicej: switch to upstream once WASIp2 support is merged:
-mio = { git = "https://github.com/dicej/mio", branch = "wasip2-draft", optional = true, default-features = false }
+mio = { path = "../../mio", optional = true, default-features = false }
 parking_lot = { version = "0.12.0", optional = true }
 socket2 = { git = "https://github.com/pimeys/socket2", branch = "wasip2", optional = true, features = [
     "all",
@@ -107,7 +107,7 @@ tracing = { version = "0.1.29", default-features = false, features = ["std"], op
 [target.'cfg(all(tokio_uring, target_os = "linux"))'.dependencies]
 io-uring = { version = "0.7.6", default-features = false }
 libc = { version = "0.2.168" }
-mio = { git = "https://github.com/dicej/mio", branch = "wasip2-draft", optional = true, default-features = false }
+mio = { path = "../../mio", optional = true, default-features = false }
 slab = "0.4.9"
 
 # Currently unstable. The API exposed by these features may be broken at any time.
@@ -117,6 +117,9 @@ backtrace = { version = "0.3.58" }
 
 [target.'cfg(any(unix, all(target_os = "wasi", target_env = "p2")))'.dependencies]
 libc = { version = "0.2.168", optional = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wasi = "0.14.2"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook-registry = { version = "1.1.1", optional = true }
